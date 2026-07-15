@@ -3,13 +3,15 @@ import os
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 from typing import List, Literal, Optional
+from agent.openrouter import CHAT_MODEL, OPENROUTER_BASE_URL
 
 
 dotenv.load_dotenv()
 
 llm = ChatOpenAI(
-    api_key=os.environ.get("OPENAI_KEY"),
-    model="gpt-4o-mini",
+    api_key=os.environ["OPENROUTER_API_KEY"],
+    base_url=OPENROUTER_BASE_URL,
+    model=CHAT_MODEL,
     temperature=0,
 )
 

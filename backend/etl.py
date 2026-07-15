@@ -1,9 +1,9 @@
 import os
 import dotenv
 import psycopg2
-from langchain_openai import OpenAIEmbeddings
 from langchain_milvus import Milvus
 from langchain_core.documents import Document
+from agent.openrouter import openrouter_embeddings
 
 dotenv.load_dotenv()
 
@@ -44,9 +44,7 @@ def run():
     print(f"Fetched {len(rows)} rows from Supabase")
 
     docs = [to_document(r) for r in rows]
-    embeddings = OpenAIEmbeddings(
-        model="text-embedding-3-small", api_key=os.environ.get("OPENAI_KEY")
-    )
+    embeddings = openrouter_embeddings()
 
     Milvus.from_documents(
         docs,

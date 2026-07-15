@@ -194,24 +194,32 @@ def _parse_text(text: str) -> dict:
 @app.get("/admin/products")
 def admin_list_products(
     page: int = 1,
+    search: Optional[str] = None,
     _user: dict = Depends(_current_user),
 ):
     PAGE_SIZE = 10
     page = max(page, 1)
+    term = f"%{search.strip()}%" if search and search.strip() else None
+    where = """WHERE is_enable = 'T' AND (
+        code ILIKE %(term)s OR name ILIKE %(term)s OR name_eng ILIKE %(term)s
+        OR brand ILIKE %(term)s OR category_l1 ILIKE %(term)s
+    )""" if term else "WHERE is_enable = 'T'"
+    params = {"term": term, "limit": PAGE_SIZE, "offset": (page - 1) * PAGE_SIZE}
     conn = psycopg2.connect(os.environ["SUPABASE_DB_URL"])
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM tbl_material WHERE is_enable = 'T'")
+            cur.execute(f"SELECT COUNT(*) FROM tbl_material {where}", params)
             total = cur.fetchone()[0]
             cur.execute(
-                """
-                SELECT code, name, name_eng, cost, stock_qty, brand, category_l1, detail
+                f"""
+                SELECT code, name, name_eng, cost, stock_qty, brand, category_l1, detail,
+                       created_at, vera_sync_status, vera_synced_at
                 FROM tbl_material
-                WHERE is_enable = 'T'
+                {where}
                 ORDER BY code DESC
-                LIMIT %s OFFSET %s
+                LIMIT %(limit)s OFFSET %(offset)s
                 """,
-                (PAGE_SIZE, (page - 1) * PAGE_SIZE),
+                params,
             )
             rows = cur.fetchall()
     finally:
@@ -222,7 +230,7 @@ def admin_list_products(
             "code": r[0], "name": r[1] or "", "name_eng": r[2] or "",
             "cost": float(r[3] or 0), "stock_qty": int(r[4] or 0),
             "brand": r[5] or "", "category": r[6] or "", "detail": r[7] or "",
-            "created_at": "",
+            "created_at": r[8], "sync_status": r[9], "synced_at": r[10],
         }
         for r in rows
     ]
@@ -251,17 +259,57 @@ def admin_add_product(body: _ProductBody, _user: dict = Depends(_current_user)):
     return {"ok": True, "code": code}
 
 
+@app.delete("/admin/products/{code}")
+def admin_delete_product(code: str, _user: dict = Depends(_current_user)):
+    conn = psycopg2.connect(os.environ["SUPABASE_DB_URL"])
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM tbl_material WHERE code = %s RETURNING code", (code,))
+            deleted = cur.fetchone()
+        if not deleted:
+            raise HTTPException(404, "Product not found")
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True, "code": code}
+
+
 @app.post("/admin/products/sync")
 def admin_sync_products(_user: dict = Depends(_current_user)):
     from etl import run
-    return {"ok": True, "count": run()}
+    conn = psycopg2.connect(os.environ["SUPABASE_DB_URL"])
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE tbl_material SET vera_sync_status = 'syncing', vera_sync_error = NULL WHERE is_enable = 'T'")
+        conn.commit()
+        count = run()
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE tbl_material
+                SET vera_sync_status = 'synced', vera_synced_at = CURRENT_TIMESTAMP,
+                    vera_sync_error = NULL
+                WHERE is_enable = 'T'
+            """)
+        conn.commit()
+        return {"ok": True, "count": count}
+    except Exception as exc:
+        conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE tbl_material SET vera_sync_status = 'failed', vera_sync_error = %s
+                WHERE is_enable = 'T'
+            """, (str(exc)[:1000],))
+        conn.commit()
+        raise
+    finally:
+        conn.close()
 
 
 @app.post("/admin/products/{code}/sync")
 def admin_sync_product(code: str, _user: dict = Depends(_current_user)):
     from etl import METADATA_FIELDS, TEXT_FIELDS, to_document
     from langchain_milvus import Milvus as MilvusVS
-    from langchain_openai import OpenAIEmbeddings
+    from agent.openrouter import openrouter_embeddings
 
     fields = TEXT_FIELDS + [f for f in METADATA_FIELDS if f not in TEXT_FIELDS]
     conn = psycopg2.connect(os.environ["SUPABASE_DB_URL"])
@@ -278,14 +326,33 @@ def admin_sync_product(code: str, _user: dict = Depends(_current_user)):
     if not row:
         raise HTTPException(404, "Product not found")
 
-    MilvusVS(
-        embedding_function=OpenAIEmbeddings(
-            model="text-embedding-3-small", api_key=os.environ.get("OPENAI_KEY")
-        ),
-        collection_name="materials",
-        connection_args={"uri": os.getenv("MILVUS_URI", "http://localhost:19530")},
-    ).add_documents([to_document(dict(zip(cols, row)))])
-    return {"ok": True, "code": code}
+    conn = psycopg2.connect(os.environ["SUPABASE_DB_URL"])
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE tbl_material SET vera_sync_status = 'syncing', vera_sync_error = NULL WHERE code = %s", (code,))
+        conn.commit()
+        MilvusVS(
+            embedding_function=openrouter_embeddings(),
+            collection_name="materials",
+            connection_args={"uri": os.getenv("MILVUS_URI", "http://localhost:19530")},
+        ).add_documents([to_document(dict(zip(cols, row)))])
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE tbl_material
+                SET vera_sync_status = 'synced', vera_synced_at = CURRENT_TIMESTAMP,
+                    vera_sync_error = NULL
+                WHERE code = %s
+            """, (code,))
+        conn.commit()
+        return {"ok": True, "code": code}
+    except Exception as exc:
+        conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute("UPDATE tbl_material SET vera_sync_status = 'failed', vera_sync_error = %s WHERE code = %s", (str(exc)[:1000], code))
+        conn.commit()
+        raise
+    finally:
+        conn.close()
 
 
 @app.get("/health")

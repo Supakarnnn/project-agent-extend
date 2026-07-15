@@ -1,13 +1,13 @@
 import os
 from langchain_core.tools import tool
-from langchain_openai import OpenAIEmbeddings
 from langchain_milvus import Milvus
 from datetime import datetime
+from agent.openrouter import openrouter_embeddings
 
 
 def _get_vectorstore() -> Milvus:
     return Milvus(
-        embedding_function=OpenAIEmbeddings(model="text-embedding-3-small"),
+        embedding_function=openrouter_embeddings(),
         collection_name="materials",
         connection_args={"uri": os.getenv("MILVUS_URI", "http://localhost:19530")},
     )
