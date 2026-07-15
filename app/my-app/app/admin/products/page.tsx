@@ -129,7 +129,7 @@ export default function ProductsPage() {
       await load(meta.page, appliedSearch);
       setVeraModal({
         state: "success",
-        message: scope === "all" ? `${data.count} products are ready for Vera.` : "Product is ready for Vera.",
+        message: scope === "all" ? `${data.embedded_count} products are ready for Vera.` : "Product is ready for Vera.",
       });
     } catch (e) {
       setVeraModal({

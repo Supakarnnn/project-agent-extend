@@ -28,15 +28,25 @@ services:
         condition: service_healthy
 
   airflow:
-    image: apache/airflow:2.10.5
-    command: standalone
+    build:
+      context: ./airflow
+    command: ["bash", "-c", "rm -f /opt/airflow/airflow-webserver.pid && exec airflow standalone"]
+    env_file:
+      - ./backend/.env
     environment:
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      MILVUS_URI: http://milvus:19530
+      _AIRFLOW_WWW_USER_USERNAME: admin
+      _AIRFLOW_WWW_USER_PASSWORD: admin
     volumes:
       - ./airflow/dags:/opt/airflow/dags
+      - ./backend:/opt/revive/backend:ro
       - airflow_data:/opt/airflow
     ports:
       - "8081:8080"
+    depends_on:
+      milvus:
+        condition: service_healthy
 
 volumes:
   milvus_data:

@@ -1,0 +1,5 @@
+langchain-openai==0.3.28
+langchain-milvus==0.2.1
+pymilvus==2.5.14
+psycopg2-binary==2.9.10
+python-dotenv

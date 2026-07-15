@@ -276,83 +276,25 @@ def admin_delete_product(code: str, _user: dict = Depends(_current_user)):
 
 @app.post("/admin/products/sync")
 def admin_sync_products(_user: dict = Depends(_current_user)):
-    from etl import run
-    conn = psycopg2.connect(os.environ["SUPABASE_DB_URL"])
+    from dataclasses import asdict
+    from etl import SyncAlreadyRunning, run
     try:
-        with conn.cursor() as cur:
-            cur.execute("UPDATE tbl_material SET vera_sync_status = 'syncing', vera_sync_error = NULL WHERE is_enable = 'T'")
-        conn.commit()
-        count = run()
-        with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE tbl_material
-                SET vera_sync_status = 'synced', vera_synced_at = CURRENT_TIMESTAMP,
-                    vera_sync_error = NULL
-                WHERE is_enable = 'T'
-            """)
-        conn.commit()
-        return {"ok": True, "count": count}
-    except Exception as exc:
-        conn.rollback()
-        with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE tbl_material SET vera_sync_status = 'failed', vera_sync_error = %s
-                WHERE is_enable = 'T'
-            """, (str(exc)[:1000],))
-        conn.commit()
-        raise
-    finally:
-        conn.close()
+        result = run()
+        return {"ok": True, **asdict(result)}
+    except SyncAlreadyRunning as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @app.post("/admin/products/{code}/sync")
 def admin_sync_product(code: str, _user: dict = Depends(_current_user)):
-    from etl import METADATA_FIELDS, TEXT_FIELDS, to_document
-    from langchain_milvus import Milvus as MilvusVS
-    from agent.openrouter import openrouter_embeddings
-
-    fields = TEXT_FIELDS + [f for f in METADATA_FIELDS if f not in TEXT_FIELDS]
-    conn = psycopg2.connect(os.environ["SUPABASE_DB_URL"])
+    from dataclasses import asdict
+    from etl import ProductNotFound, SyncAlreadyRunning, run
     try:
-        with conn.cursor() as cur:
-            cur.execute(
-                f"SELECT {', '.join(fields)} FROM tbl_material WHERE code = %s AND is_enable = 'T'",
-                (code,),
-            )
-            row = cur.fetchone()
-            cols = [d[0] for d in cur.description]
-    finally:
-        conn.close()
-    if not row:
-        raise HTTPException(404, "Product not found")
-
-    conn = psycopg2.connect(os.environ["SUPABASE_DB_URL"])
-    try:
-        with conn.cursor() as cur:
-            cur.execute("UPDATE tbl_material SET vera_sync_status = 'syncing', vera_sync_error = NULL WHERE code = %s", (code,))
-        conn.commit()
-        MilvusVS(
-            embedding_function=openrouter_embeddings(),
-            collection_name="materials",
-            connection_args={"uri": os.getenv("MILVUS_URI", "http://localhost:19530")},
-        ).add_documents([to_document(dict(zip(cols, row)))])
-        with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE tbl_material
-                SET vera_sync_status = 'synced', vera_synced_at = CURRENT_TIMESTAMP,
-                    vera_sync_error = NULL
-                WHERE code = %s
-            """, (code,))
-        conn.commit()
-        return {"ok": True, "code": code}
-    except Exception as exc:
-        conn.rollback()
-        with conn.cursor() as cur:
-            cur.execute("UPDATE tbl_material SET vera_sync_status = 'failed', vera_sync_error = %s WHERE code = %s", (str(exc)[:1000], code))
-        conn.commit()
-        raise
-    finally:
-        conn.close()
+        return {"ok": True, "code": code, **asdict(run(code))}
+    except SyncAlreadyRunning as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ProductNotFound as exc:
+        raise HTTPException(404, "Product not found") from exc
 
 
 @app.get("/health")

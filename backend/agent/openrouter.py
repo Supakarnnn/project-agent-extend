@@ -8,6 +8,7 @@ dotenv.load_dotenv()
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 CHAT_MODEL = "qwen/qwen3.5-flash-02-23"
 EMBEDDING_MODEL = "baai/bge-m3"
+EMBEDDING_DIMENSION = 1024
 
 
 def openrouter_embeddings() -> OpenAIEmbeddings:
