@@ -1,0 +1,43 @@
+services:
+  milvus:
+    image: milvusdb/milvus:v2.4.17
+    command: milvus run standalone
+    environment:
+      ETCD_USE_EMBED: "true"
+      ETCD_DATA_DIR: /var/lib/milvus/etcd
+      COMMON_STORAGETYPE: local
+    volumes:
+      - milvus_data:/var/lib/milvus
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  attu:
+    image: zilliz/attu:v2.4.12
+    environment:
+      MILVUS_URL: milvus:19530
+    ports:
+      - "8001:3000"
+    depends_on:
+      milvus:
+        condition: service_healthy
+
+  airflow:
+    image: apache/airflow:2.10.5
+    command: standalone
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - airflow_data:/opt/airflow
+    ports:
+      - "8081:8080"
+
+volumes:
+  milvus_data:
+  airflow_data:

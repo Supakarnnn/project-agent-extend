@@ -1,0 +1,117 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+:root {
+  --bg: #0a0e0c;
+  --bg-deep: #070a08;
+  --surface: #111714;
+  --surface-2: #161d19;
+  --bone: #ece6da;
+  --bone-dim: #b9b3a7;
+  --muted: #79857c;
+  --line: #25302a;
+  --moss: #38493f;
+  --accent: #c2f74e;
+  --accent-press: #aee23a;
+  --sand: #e3bd97;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-bone: var(--bone);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-sand: var(--sand);
+  --color-line: var(--line);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-display: var(--font-fraunces);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--bg);
+  color: var(--bone);
+  font-family: var(--font-sans), sans-serif;
+  overflow-x: clip;
+}
+
+::selection {
+  background: var(--accent);
+  color: #0a0e0c;
+}
+
+/* Atmospheric grain overlay */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  pointer-events: none;
+  opacity: 0.05;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 240 240' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+.eyebrow {
+  font-family: var(--font-mono), monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.display {
+  font-family: var(--font-display), serif;
+  font-weight: 350;
+  letter-spacing: -0.02em;
+  line-height: 0.95;
+}
+
+.grain-line {
+  background-image: linear-gradient(90deg, transparent, var(--line) 12%, var(--line) 88%, transparent);
+}
+
+/* Hide content until GSAP reveals it (no-flash, degrades gracefully) */
+.reveal {
+  opacity: 0;
+}
+.no-js .reveal {
+  opacity: 1;
+}
+
+.marquee-track {
+  animation: marquee 38s linear infinite;
+}
+@keyframes marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee-track {
+    animation: none;
+  }
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+.lift {
+  transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.5s, background 0.5s;
+}
+.lift:hover {
+  transform: translateY(-6px);
+  border-color: var(--moss);
+}
