@@ -15,26 +15,23 @@ def react_agent(llm : ChatOpenAI , tools : list, system_prompt : str | None = No
         messages = []
         used_tools: List[str] = state.get("used_tools", [])
         for tool_call in state["messages"][-1].tool_calls:
-            # print("tool_call.args =", tool_call["args"])
-            tool = tools_by_name[tool_call["name"]]
-            result = await tool.ainvoke(tool_call["args"]) 
-            used_tools.append(tool_call["name"])
+            name = tool_call["name"]
+            tool = tools_by_name.get(name)
+            if tool is None:
+                result = f"Tool '{name}' is not available"
+            else:
+                try:
+                    result = await tool.ainvoke(tool_call["args"])
+                    used_tools.append(name)
+                except Exception:
+                    result = f"Tool '{name}' failed. Do not invent results."
 
             messages.append(ToolMessage(
                 content=result,
                 tool_call_id=tool_call["id"],
-                name=tool_call["name"]
+                name=name
             ))
-
-        content_from_Tool = ""
-        for msg in messages:
-            content_from_Tool+=msg.content + "\n\n"
-        HumaHuman = HumanMessage(content=content_from_Tool)
-                    
-        # print("---------------------------------------------------------------------------")
-        # print(HumaHuman)
-        # print("---------------------------------------------------------------------------")
-        return {"messages": state["messages"]+ messages + [HumaHuman],
+        return {"messages": state["messages"] + messages,
                 "used_tools": used_tools,
                 }
 

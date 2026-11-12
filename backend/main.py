@@ -1,19 +1,23 @@
-import os, dotenv, logging, time
+import os, dotenv, logging, time, asyncio
+from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, Request, Response, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 import jwt
 import psycopg2
 import bcrypt as _bcrypt
 from typing import Optional
 from agent.model import llm, RequestMessage, SYSTEM_PROMPT
+from agent.output import public_answer
+from agent.stream import stream_answer
 from agent.tools import get_current_time, search_products
 import admin_sql as _sql
 
 tools = [search_products, get_current_time]
 from agent.react import react_agent
-from langchain_core.messages import HumanMessage,SystemMessage,AIMessage
+from langchain_core.messages import HumanMessage, AIMessage
 
 dotenv.load_dotenv()
 
@@ -23,6 +27,9 @@ _EXPIRE_HOURS = 8
 
 app = FastAPI()
 logger = logging.getLogger("uvicorn.error")
+_chat_requests: dict[str, deque[float]] = defaultdict(deque)
+_chat_rate_lock = asyncio.Lock()
+_CHAT_RATE_LIMIT = int(os.getenv("CHAT_RATE_LIMIT", "20"))
 
 
 @app.middleware("http")
@@ -40,12 +47,14 @@ async def log_api_completion(request: Request, call_next):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=[origin.strip() for origin in os.getenv(
+        "CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
+    ).split(",") if origin.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-graph = react_agent(llm, tools=[])
+graph = react_agent(llm, tools=tools, system_prompt=SYSTEM_PROMPT)
 
 
 class ChatRequest(BaseModel):
@@ -303,20 +312,47 @@ def health():
 
 
 @app.post("/chat")
-async def chat(chatmessage: RequestMessage):
+async def chat(chatmessage: RequestMessage, request: Request):
+    now = time.monotonic()
+    ip = request.client.host if request.client else "unknown"
+
+    async with _chat_rate_lock:
+        window = _chat_requests[ip]
+        while window and window[0] <= now - 60:
+            window.popleft()
+        if len(window) >= _CHAT_RATE_LIMIT:
+            return JSONResponse({"error": {"code": "RATE_LIMITED", "message": "ส่งข้อความถี่เกินไป กรุณารอสักครู่"}}, status_code=429)
+        window.append(now)
+
     messages = []
 
     for chat in chatmessage.messages:
         if chat.role == 'ai':
-            messages.append(AIMessage(content=chat.content))
+            messages.append(AIMessage(content=public_answer(chat.content)))
         elif chat.role == 'human':
             messages.append(HumanMessage(content=chat.content))
-        elif chat.role == 'system':
-            messages.append(SystemMessage(content=chat.content))
-
-    agent = react_agent(llm, tools=tools, system_prompt=SYSTEM_PROMPT)
-    result = await agent.ainvoke({"messages": messages, "used_tools": []})
-    return {"response": result["messages"][-1].content}
+    if "application/x-ndjson" in request.headers.get("accept", ""):
+        return StreamingResponse(
+            stream_answer(graph, messages),
+            media_type="application/x-ndjson",
+            headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
+        )
+    try:
+        async with asyncio.timeout(45):
+            result = await graph.ainvoke(
+                {"messages": messages, "used_tools": []},
+                config={"recursion_limit": 6},
+            )
+    except TimeoutError as exc:
+        logger.warning("Chat timed out ip=%s", ip)
+        return JSONResponse({"error": {"code": "AGENT_TIMEOUT", "message": "Vera ใช้เวลาตอบนานเกินไป กรุณาลองใหม่"}}, status_code=504)
+    except Exception as exc:
+        logger.exception("Chat failed ip=%s", ip)
+        return JSONResponse({"error": {"code": "AGENT_UNAVAILABLE", "message": "Vera ยังไม่พร้อมใช้งาน กรุณาลองใหม่"}}, status_code=503)
+    answer = public_answer(result["messages"][-1].content)
+    if not answer:
+        return JSONResponse({"error": {"code": "EMPTY_ANSWER", "message": "Vera ยังตอบไม่สำเร็จ กรุณาลองใหม่"}}, status_code=503)
+    return {"response": answer}
 
 
 if __name__ == "__main__":
